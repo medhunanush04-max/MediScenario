@@ -1,0 +1,93 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15-alpine
+    container_name: mediscenario-db
+    environment:
+      POSTGRES_DB: ${DB_NAME:-mediscenario}
+      POSTGRES_USER: ${DB_USER:-mediscenario_user}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-mediscenario_password}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./database/init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-mediscenario_user}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - mediscenario-network
+
+  # Backend API (Python/Flask)
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: mediscenario-api
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: ${DB_NAME:-mediscenario}
+      DB_USER: ${DB_USER:-mediscenario_user}
+      DB_PASSWORD: ${DB_PASSWORD:-mediscenario_password}
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      JWT_SECRET: ${JWT_SECRET}
+      NODE_ENV: ${NODE_ENV:-development}
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./backend:/app
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - mediscenario-network
+    command: python -m flask run --host=0.0.0.0
+
+  # Frontend (React/Next.js)
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: mediscenario-web
+    environment:
+      REACT_APP_API_URL: http://localhost:5000/api
+      REACT_APP_ENV: ${REACT_APP_ENV:-development}
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    depends_on:
+      - backend
+    networks:
+      - mediscenario-network
+    command: npm start
+
+  # Redis for caching (optional)
+  redis:
+    image: redis:7-alpine
+    container_name: mediscenario-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - mediscenario-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  postgres_data:
+  redis_data:
+
+networks:
+  mediscenario-network:
+    driver: bridge
